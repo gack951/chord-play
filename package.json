@@ -1,0 +1,29 @@
+{
+  "name": "chord-play",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc -b && vite build",
+    "test": "vitest run",
+    "test:browser": "playwright test",
+    "lint": "eslint .",
+    "typecheck": "tsc --noEmit"
+  },
+  "engines": {
+    "node": ">=22"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.24.0",
+    "@playwright/test": "^1.58.2",
+    "@types/node": "^22.14.1",
+    "@typescript-eslint/eslint-plugin": "^8.29.0",
+    "@typescript-eslint/parser": "^8.29.0",
+    "eslint": "^9.24.0",
+    "globals": "^16.0.0",
+    "typescript": "^5.8.3",
+    "vite": "^6.2.5",
+    "vitest": "^3.1.1"
+  }
+}

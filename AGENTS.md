@@ -1,0 +1,815 @@
+# AGENTS.md
+
+## Purpose
+
+Build and maintain a **client-only web app for enjoying music practice and chord playback**.
+
+This project is for **personal use only**.  
+There is **no authentication**, **no server**, and **no cloud persistence**.  
+All data must stay in the browser and be persisted locally.
+
+The app must work primarily on:
+
+1. Android Chrome
+2. PC Chrome
+
+PWA support is **not required**.
+
+---
+
+## Non-negotiable product requirements
+
+### Core concept
+
+The app allows the user to:
+
+- input a chord progression as text
+- save it locally in the browser
+- set a tempo
+- play the progression in the browser with MIDI-like synthesized sound
+- play simple percussion patterns at the same time
+- resync playback to an external song by pressing a sync button at the exact bar start
+
+The app is intended to be used while another song is playing externally, so **real-time timing correction and immediate response are first-class requirements**.
+
+---
+
+## Tech stack
+
+Use the following stack unless the user explicitly changes it:
+
+- **TypeScript**
+- **Node.js 22+**
+- **pnpm**
+- **Vite**
+- **Web Audio API**
+- browser-only application
+- no backend
+- no database
+- no framework is strictly required
+
+### Framework policy
+
+Choose the smallest implementation that keeps the code maintainable.
+
+Preferred order:
+
+1. Vanilla TypeScript + modular architecture
+2. Lightweight UI library only if clearly justified
+3. Avoid large frameworks unless they materially simplify state, rendering, and testing
+
+If you introduce a dependency, justify it in the diff or commit message and keep the set minimal.
+
+---
+
+## Persistence policy
+
+All user data must be stored locally in the browser.
+
+Preferred storage:
+
+- `localStorage` for app settings and small metadata
+- IndexedDB only if needed for larger structured storage
+
+At minimum, persist:
+
+- saved songs/presets
+- song title
+- chord progression text
+- BPM
+- chord playback mode
+- drum pattern
+- selected chord instrument
+- bass register
+- chord register
+- volume settings
+- last edited song
+
+No login. No sync. No remote API.
+
+---
+
+## Product features to implement
+
+## 1. Chord progression text input
+
+The user inputs chord progressions as text.
+
+The syntax should be **inspired by TexChord**, but adapted for easier keyboard entry.
+
+### Delimiters
+
+- Bar separators: `|` and `;` are both valid
+- Leading and trailing separators are optional
+
+Examples:
+
+- `C | Am | F | G`
+- `C ; Am ; F ; G`
+- `| C | Am | F | G |`
+- `C G/B | Am7 D7 | F % G7 C`
+
+### Supported chord tokens
+
+Must support:
+
+- basic chords  
+  - `C`
+  - `Dm`
+  - `G7`
+  - `Bbmaj7`
+  - `F#m`
+- tension chords  
+  - `Cadd9`
+  - `G7(b9)`
+  - `Dm7(11)`
+- slash chords  
+  - `C/E`
+- `sus`, `aug`, `dim`
+  - `Gsus4`
+  - `Caug`
+  - `Bdim`
+- no-chord symbols
+  - `N.C.`
+  - `-`
+- repeat previous chord inside the same bar or across bars
+  - `%`
+
+### Meter and subdivision
+
+- fixed **4/4** only
+- each bar supports **1, 2, or 4 chord slots**
+- `%` repeats the immediately previous effective chord
+- this allows patterns like:
+  - `Cm % F F7`
+- interpret that as four equal slots
+
+### Important parsing rules
+
+- A bar must contain exactly 1, 2, or 4 tokens after expansion of `%`
+- `N.C.` and `-` represent silence for that slot
+- invalid bars must produce a structured parse error
+- parse errors must be visible in the UI
+- partial success is acceptable only if invalid bars are clearly marked and excluded from playback
+
+### Syntax design rule
+
+Keep the grammar practical and keyboard-friendly.  
+Do not attempt full compatibility with every TexChord feature.  
+Prioritize:
+
+1. easy typing
+2. predictable parsing
+3. clear error reporting
+4. stable playback timing
+
+Document the exact supported grammar in the repository.
+
+---
+
+## 2. Playback
+
+### Chord playback modes
+
+Implement these modes:
+
+- `block`
+  - all chord tones start simultaneously
+- `arp-up-8`
+  - ascending eighth-note arpeggio
+- `arp-down-8`
+  - descending eighth-note arpeggio
+- `arp-updown-8`
+  - ascending then descending eighth-note arpeggio
+
+### Registers
+
+The user must be able to choose:
+
+- **bass register**
+- **chord register**
+
+Defaults:
+
+- bass register: `C3`
+- chord register: `C4`
+
+### Voicing rules for initial version
+
+- fixed voicing rules
+- no advanced voice-leading optimization yet
+- slash chords place the specified bass note in the bass register
+- chord tones stay in the chord register range
+- future voice-leading optimization is expected, but not part of the initial implementation
+
+### Instrument selection
+
+Chord instrument must be selectable from a small set of MIDI-like synthesized instruments.
+
+Initial requirement:
+
+- a few selectable chord instruments
+- percussion sound can stay fixed for now
+
+Keep instrument synthesis simple and fast.  
+Use Web Audio API synthesis or lightweight sample-free synthesis.  
+Avoid large soundfont dependencies unless clearly necessary.
+
+---
+
+## 3. Drum patterns
+
+Implement simple selectable percussion patterns:
+
+- `metronome`
+- `four-on-the-floor`
+- `8beat`
+- `16beat`
+
+Drum sound source can be fixed and MIDI-like.
+
+At minimum, use a simple drum set concept with:
+
+- kick
+- snare
+- hi-hat
+
+The priority is timing stability and low latency, not realism.
+
+---
+
+## 4. Transport controls
+
+Implement:
+
+- Play from start
+- Stop
+- Pause
+- Resume
+
+Behavior:
+
+- **Play** always starts from the beginning
+- **Pause** preserves current playback position
+- **Resume** continues from paused position
+- **Stop** ends playback and clears the paused state
+
+---
+
+## 5. Resync control
+
+This is a critical feature.
+
+Implement a **1-bar sync button** only.
+
+### Required behavior
+
+When the user presses the sync button on `touchstart` or `mousedown`:
+
+- treat that exact moment as the bar start of the external song
+- immediately snap this app’s playback position to the nearest bar boundary
+- continue playback without stopping
+
+### Requirements
+
+- use the earliest appropriate pointer event
+- do not wait for `click`
+- prioritize responsiveness on Android Chrome
+- resync must not recreate the entire audio graph if that causes audible lag
+- timing correction should update the transport phase immediately
+
+The intended use case is manual synchronization with an externally playing song.
+
+---
+
+## 6. UI requirements
+
+Minimum UI:
+
+- chord progression text area
+- formatted bar-by-bar preview
+- parse error display
+- BPM input
+- Play / Stop / Pause / Resume controls
+- 1-bar Sync button
+- chord playback mode selector
+- drum pattern selector
+- chord instrument selector
+- bass register selector
+- chord register selector
+- master volume
+- chord volume
+- drum volume
+- current bar display
+- saved song list
+- import/export JSON actions
+
+### UI priorities
+
+- mobile-first layout, but works on desktop
+- controls must be easy to tap
+- sync button must be large and low-latency
+- current playback position must be visually obvious
+- do not hide critical transport controls in menus
+
+---
+
+## 7. Saved song management
+
+Users can save multiple songs locally.
+
+Each song should include at least:
+
+- `id`
+- `title`
+- `createdAt`
+- `updatedAt`
+- `progressionText`
+- `bpm`
+- `playbackMode`
+- `drumPattern`
+- `instrument`
+- `bassRegister`
+- `chordRegister`
+- `masterVolume`
+- `chordVolume`
+- `drumVolume`
+
+### Title behavior
+
+- default title should be based on the current date/time
+- user can rename it later
+
+### Import/export
+
+Support JSON import/export.
+
+Requirements:
+
+- export one or more saved songs as JSON
+- import JSON with validation
+- reject malformed JSON with clear messages
+- preserve backward compatibility where practical by versioning the format
+
+Use an explicit schema version in exported data.
+
+---
+
+## Audio engine requirements
+
+## Timing
+
+Timing quality is more important than synthesis complexity.
+
+Use a scheduler architecture appropriate for Web Audio:
+
+- maintain a musical transport separate from UI state
+- schedule slightly ahead of current time
+- keep lookahead short enough for responsive sync
+- ensure pause/resume and resync update transport state correctly
+
+Avoid designs that depend on imprecise UI timers alone for note triggering.
+
+### Strong expectations
+
+- transport logic must be testable in isolation where practical
+- parsing must be separate from playback
+- the scheduler must not depend on the DOM
+- UI should only dispatch state changes and render results
+
+---
+
+## Architecture expectations
+
+Prefer a modular architecture with clear boundaries.
+
+Suggested modules:
+
+- `parser/`
+  - tokenization
+  - bar parsing
+  - chord interpretation
+  - syntax errors
+- `music/`
+  - chord tone generation
+  - interval logic
+  - register placement
+  - arpeggio generation
+- `audio/`
+  - transport
+  - scheduler
+  - synth voices
+  - drum synth
+- `state/`
+  - persistence
+  - current song
+  - settings
+- `ui/`
+  - controls
+  - preview
+  - error rendering
+  - playback indicator
+
+The exact folder structure can vary, but separation of concerns is required.
+
+---
+
+## Testing requirements
+## Browser-based verification requirements
+
+In addition to unit tests and type checks, the agent must perform automated browser verification whenever UI, DOM structure, event handling, transport controls, parsing UI, persistence UI, or import/export behavior is changed.
+
+### Purpose
+
+The goal is to automatically catch:
+
+- browser console errors
+- runtime exceptions
+- broken DOM structure
+- missing or incorrect UI elements
+- incorrect event wiring
+- obvious interaction regressions
+- mismatches between intended and actual control behavior
+
+Audio content itself does **not** need to be validated by automation.  
+Do **not** block progress on verifying the subjective quality of generated sound.
+
+### What must be checked automatically
+
+For relevant changes, use a browser automation workflow and verify at least the following:
+
+1. the app loads successfully
+2. no unexpected console errors appear during load
+3. no unexpected console errors appear during core interactions
+4. the main UI is present and visible
+5. the expected controls exist and are interactable
+6. text input updates the formatted preview
+7. invalid input shows parse errors
+8. valid input clears parse errors appropriately
+9. Play / Stop / Pause / Resume controls dispatch the expected UI state transitions
+10. Sync button responds on press-start style interaction, not only on click
+11. song save/load interactions update UI and persistence state as expected
+12. JSON import/export UI paths work for valid and invalid data
+13. current bar / transport-related visual state updates when expected
+14. no duplicate event handling occurs from repeated renders or listener leaks
+
+### Required automation approach
+
+Use a real browser automation tool where practical, preferably Playwright.
+
+Add and maintain browser-level tests for critical flows.  
+If full end-to-end coverage is not yet practical, at minimum create a lightweight automated smoke test that:
+
+- opens the app
+- listens for console errors
+- exercises the main controls
+- asserts expected DOM changes
+- fails on unhandled page errors
+
+### Console and page error policy
+
+Treat these as failures unless explicitly expected and documented:
+
+- uncaught exceptions
+- unhandled promise rejections
+- `console.error(...)`
+- framework/runtime fatal errors
+- failed module load errors
+
+If a warning is known and acceptable, document it clearly in test code or developer notes rather than silently ignoring all warnings.
+
+### Interaction requirements
+
+Automated verification should cover at least these interaction patterns:
+
+- typing into the chord progression text area
+- changing BPM
+- changing playback mode
+- changing drum pattern
+- changing instrument
+- changing bass register
+- changing chord register
+- pressing Play / Stop / Pause / Resume
+- pressing Sync using press-start semantics
+- saving a song
+- loading a saved song
+- exporting JSON
+- importing valid JSON
+- importing invalid JSON
+
+For Sync specifically:
+- test the earliest supported interaction event path
+- do not validate sound output
+- do validate that the intended handler fires and that transport/UI state changes consistently
+
+### DOM and structure checks
+
+Automated tests should verify that the main semantic/UI structure still exists, including at least:
+
+- progression input area
+- preview area
+- parse error area
+- transport controls
+- sync button
+- settings controls
+- saved song list
+- import/export controls
+
+The test should fail if key controls are missing, disabled unexpectedly, detached from the DOM, or hidden in a way that prevents intended use.
+
+### Persistence verification
+
+Automated browser checks should verify persistence behavior where practical:
+
+- saved songs survive reload
+- last edited state survives reload if that behavior is implemented
+- invalid imported data does not corrupt existing saved data
+
+### Minimum command expectations
+
+If browser automation is set up, provide and maintain a command such as one of:
+
+- `pnpm test:e2e`
+- `pnpm test:browser`
+- `pnpm verify:browser`
+
+Document the command in `README.md`.
+
+### Delivery expectations for UI-related changes
+
+When a task changes UI or browser interaction behavior, the completion report must include:
+
+- whether automated browser verification was run
+- which command was used
+- whether console/page errors were checked
+- which critical interaction paths were covered
+- any remaining gaps in automation coverage
+
+Do not claim UI work is complete based only on static inspection or unit tests if browser automation could reasonably have been run.
+
+Whenever code changes, verify behavior as far as practical.
+
+Minimum expectations:
+
+- run typecheck
+- run lint if configured
+- run automated tests if present
+- add tests for parser logic and pure music logic
+- manually verify playback-critical behavior for transport changes
+
+### High-value automated tests
+
+Add or maintain tests for:
+
+- bar splitting using `|` and `;`
+- optional leading/trailing delimiters
+- `1 / 2 / 4` slot bar validation
+- `%` expansion behavior
+- `N.C.` and `-`
+- slash chord parsing
+- tension chord parsing
+- invalid syntax error reporting
+- JSON import/export validation
+- transport state transitions
+  - play
+  - stop
+  - pause
+  - resume
+  - sync
+
+### Manual verification checklist
+
+Manual verification is still useful for areas that are difficult to validate automatically, but it does **not** replace browser automation for UI changes.
+
+For audio or transport changes, manually verify as needed:
+
+1. Play starts from bar 1
+2. Pause and resume preserve timing correctly
+3. Stop resets transport
+4. Sync on press immediately re-aligns the bar
+5. Android Chrome interaction starts audio correctly after user gesture
+6. No obvious double-triggering or stuck notes
+7. Formatted preview matches playback structure
+
+Do not require manual validation of subjective sound quality as a release blocker.
+Focus manual checks on transport behavior, interaction timing, and visible UI behavior.
+
+---
+
+## Developer workflow
+
+Use **pnpm** for all package management tasks.
+
+Typical commands should exist or be added:
+
+- `pnpm install`
+- `pnpm dev`
+- `pnpm build`
+- `pnpm test`
+- `pnpm lint`
+- `pnpm typecheck`
+
+If a command does not exist yet, create an equivalent script in `package.json`.
+
+---
+
+## Codex CLI workflow expectations
+
+This repository is intended to be worked on repeatedly with Codex CLI.
+
+That means the agent must optimize for **continuity**, **verification**, and **small recoverable steps**.
+
+For UI-facing changes, do not stop after code edits alone.  
+Run browser automation where available, check console/page errors, and verify that key interactions and DOM structure still behave as intended.
+
+## General operating rules for Codex
+
+- Read this file before making changes.
+- Keep a running understanding of the repository structure before editing.
+- Before substantial work, inspect the relevant files and existing architecture.
+- Prefer small, coherent diffs over giant rewrites unless a rewrite is clearly justified.
+- After changes, run the relevant checks and report the exact result.
+- Do not claim a feature is complete unless:
+  - implementation is present
+  - relevant checks pass
+  - obvious manual verification steps are described
+
+## Git discipline
+
+When asked to perform non-trivial work:
+
+- make or recommend a git checkpoint before major changes
+- keep commits logically scoped
+- avoid mixing refactors with feature work unless necessary
+
+## Continuity across repeated Codex runs
+
+Because Codex CLI may be invoked many times on this repository:
+
+- keep documentation updated when architecture changes
+- keep `README.md` and any developer notes aligned with implementation
+- if work is partial, leave the repository in a resumable state
+- when stopping mid-task, record:
+  - what was completed
+  - what remains
+  - blockers
+  - exact next step
+
+Prefer updating repository docs rather than relying on conversational memory.
+
+---
+
+## Long-horizon work rule
+
+For complex features or large refactors, use `PLANS.md`.
+
+### When to use `PLANS.md`
+
+Create or update a plan before implementation when the task involves any of the following:
+
+- significant transport redesign
+- parser grammar expansion
+- audio scheduling changes
+- large UI restructuring
+- import/export schema changes
+- multi-file refactors across major modules
+
+### Plan expectations
+
+A plan should include:
+
+- goal
+- constraints
+- current state
+- target design
+- files to change
+- risks
+- validation steps
+- rollback or fallback strategy
+
+If `PLANS.md` exists, follow it.  
+If it does not exist and the task is substantial, create it before large implementation work.
+
+---
+
+## Review expectations
+
+Before declaring work done, review the diff for:
+
+- timing regressions
+- parse ambiguity
+- mobile interaction regressions
+- unnecessary dependencies
+- state persistence mistakes
+- mismatches between preview and playback
+- schema compatibility issues in import/export
+
+If a review-specific document is added later, follow it.
+
+---
+
+## Performance expectations
+
+This app is interactive and timing-sensitive.
+
+Priorities:
+
+1. reliable playback timing
+2. low-latency sync response
+3. smooth mobile interaction
+4. clear maintainable code
+
+Avoid premature optimization, but do not choose architectures that are obviously hostile to timing-sensitive playback.
+
+---
+
+## Accessibility and usability
+
+Keep the UI simple and legible.
+
+At minimum:
+
+- adequate button size on mobile
+- keyboard operability on desktop where practical
+- visible selected states for mode/pattern/instrument
+- clear parse error messages tied to the input
+- no color-only critical cues
+
+---
+
+## Output and communication expectations for Codex
+
+When working on a task:
+
+- state what files were changed
+- state what checks were run
+- state whether they passed or failed
+- state any remaining limitations
+- do not pad with unnecessary narration
+
+For implementation tasks, prefer action over excessive speculation.  
+For ambiguous product decisions, choose the simplest design consistent with this file and document the choice.
+
+**Communication with the user must be in Japanese.**
+**開発者とのやり取りは日本語で行うこと**
+
+---
+
+## Initial implementation priorities
+
+If building the app from scratch, implement in this order:
+
+1. project scaffold
+2. chord text parser
+3. formatted preview + parse error UI
+4. transport and timing model
+5. chord playback
+6. drum playback
+7. pause/resume/stop
+8. sync button
+9. persistence
+10. JSON import/export
+11. polish for Android Chrome
+
+Do not start with visual polish before parser, transport, and persistence basics exist.
+
+---
+
+## Definition of done for the first usable version
+
+The first usable version is complete only when all of the following are true:
+
+- user can input progression text with `|` or `;`
+- parser supports the required chord forms
+- invalid input shows clear errors
+- formatted preview is rendered
+- BPM can be edited
+- block and three arpeggio modes work
+- drum patterns work
+- instrument selection works
+- bass and chord register selection works
+- Play / Stop / Pause / Resume work
+- 1-bar Sync works on press with low perceived latency
+- songs persist locally
+- JSON import/export works
+- build succeeds
+- relevant tests pass
+- manual verification notes are recorded
+
+---
+
+## Notes on future scope
+
+These are explicitly out of scope for the initial version unless the user asks:
+
+- backend
+- login
+- cloud sync
+- collaboration
+- repeat markers and advanced structural notation
+- advanced voice-leading optimization
+- PWA/offline install work
+- realistic drum sample libraries
+- full DAW features
+
+Keep the product focused.
