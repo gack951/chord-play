@@ -2,79 +2,84 @@
 
 ## Goal
 
-Replace the fixed instrument list with a configurable ADSR synthesizer, persist synth presets locally, include presets in JSON import/export, and allow songs to select from saved presets.
+Move persistence from browser-local storage to authenticated Cloudflare-backed storage.
+
+Target outcome:
+
+- the whole app is protected by Google login through Cloudflare Access
+- user data is stored per authenticated account in D1
+- writes use `updatedAt`-based last-write-wins
+- local persistence is reduced to temporary cache only
+- progression text avoids aggressive autosave and syncs on blur
 
 ## Constraints
 
-- Client-only; no backend, auth, or cloud sync
-- TypeScript + pnpm + Vite
-- Web Audio API based playback
-- Local persistence only
-- Timing stability and low-latency sync take priority over synthesis realism
-- Browser automation is required for UI-facing changes
-- Keep the implementation modular across audio, state, and UI
-- The old first three instruments are removed; the default preset should match current `debug-hold` behavior as closely as practical
+- Cloudflare Pages deployment already exists
+- Authentication should use Google accounts through Cloudflare services
+- Browser-only UI remains, but persistence and identity move server-side
+- Existing local saved data can be ignored rather than migrated
+- Timing-sensitive playback behavior must remain intact
+- Browser automation remains required for UI and persistence-related changes
 
 ## Current State
 
-- Songs currently store a fixed `instrument` string
-- Local storage and JSON export contain only song data
-- AudioEngine derives tone directly from hard-coded instrument branches
-- UI exposes a simple instrument select with four built-in options
+- App state is persisted directly in `localStorage`
+- No server-side API exists
+- No authentication exists
+- Saved songs and synth presets are fully local
 
 ## Target Design
 
-### Data Model
+### Auth and Request Flow
 
-- Introduce synth preset entities with:
-  - `id`
-  - `name`
-  - oscillator waveform
-  - filter cutoff
-  - attack
-  - decay
-  - sustain
-  - release
-- Store presets alongside songs in app state
-- Songs store `synthPresetId` instead of fixed instrument IDs
-- Bump export schema version and keep practical backward compatibility for earlier song-only exports
+- Protect the app with Cloudflare Access
+- Validate Access JWTs in Pages Functions
+- Identify the user from Access identity data
+- Expose authenticated JSON endpoints for app state load/save
 
-### Audio
+### Persistence
 
-- Replace hard-coded instrument branches with parameter-driven ADSR scheduling
-- Use the new default preset as the migration target for old songs
-- Keep note logging and timing behavior intact
+- Store per-user state in D1
+- Keep one canonical remote app-state document per user
+- Use `updatedAt` timestamps with last-write-wins semantics
+- Keep a temporary local cache only for short-lived recovery and startup fallback
 
-### UI
+### Client Behavior
 
-- Replace the instrument select with a saved preset select
-- Add editable ADSR controls and waveform/filter parameters
-- Add a save/update preset action so edited values persist locally
-- Keep mobile usability acceptable without hiding transport controls
+- On startup:
+  - fetch authenticated remote state
+  - fall back to cache only if remote is temporarily unavailable
+- On edits:
+  - progression text saves on blur
+  - discrete controls save on change
+  - remote writes compare timestamps and keep the newest state
 
-### Verification
+### Local Development
 
-- Update state tests for schema migration and preset import/export
-- Update browser tests for preset selection/edit/save/import paths
-- Keep transport and parser coverage green
+- Provide a local API path for browser tests and development without requiring live Cloudflare auth
+- Keep production-oriented server logic reusable between local and Pages environments
 
 ## Files To Change
 
 - `PLANS.md`
 - `README.md`
-- `src/types/**`
+- `package.json`
+- `vite.config.ts`
 - `src/state/**`
-- `src/audio/**`
 - `src/ui/**`
+- `src/types/**`
+- `src/server/**`
+- `functions/**`
 - `test/**`
 - `e2e/**`
+- Cloudflare config files as needed
 
 ## Risks
 
-- Schema migration can break existing local data if defaults are wrong
-- Songs can reference missing presets after import/merge unless repaired
-- ADSR release settings can unintentionally reintroduce short perceived note lengths
-- UI growth can hurt mobile layout if controls become too dense
+- Access and D1 require manual Cloudflare dashboard setup outside the repo
+- Local dev and browser test setup can drift from production behavior if server logic is duplicated
+- Last-write-wins can still overwrite edits from another device if both sides edit concurrently
+- Removing durable local persistence increases dependence on remote availability
 
 ## Validation Steps
 
@@ -86,6 +91,6 @@ Replace the fixed instrument list with a configurable ADSR synthesizer, persist 
 
 ## Rollback / Fallback Strategy
 
-- Keep preset definitions centralized so migration can fall back to one built-in default preset
-- Preserve import support for prior schema versions instead of hard-failing old exports
-- If preset CRUD becomes too large, keep a single editable saved preset path first rather than a larger redesign
+- Keep remote persistence behind a small client abstraction
+- Preserve temporary cache as a safety net for transient failures
+- Keep local dev API compatible with production request/response shapes

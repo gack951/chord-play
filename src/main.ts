@@ -6,4 +6,4 @@ if (!root) {
   throw new Error('#app が見つかりません');
 }
 
-mountApp(root);
+void mountApp(root);

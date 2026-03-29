@@ -1,20 +1,54 @@
 import '../style.css';
 import { normalizeSynthPresetName } from '../audio/synthPresets';
 import { AudioEngine } from '../audio/engine';
-import { buildChordMidiNotes } from '../music/voicing';
-import { calculateTapTempo, normalizeTapHistory } from '../music/tapTempo';
 import { Scheduler } from '../audio/scheduler';
 import { Transport } from '../audio/transport';
-import { parseProgression } from '../parser/progression';
+import { buildChordMidiNotes } from '../music/voicing';
 import { noteNameToMidi } from '../music/note';
-import { createInitialState, createSong, exportSongs, generateSynthPresetId, importSongs, loadState, saveState } from '../state/song';
-import { DRUM_PATTERNS, OSCILLATOR_TYPES, PLAYBACK_MODES, type AppState, type Song, type SynthPreset } from '../types/app';
+import { calculateTapTempo, normalizeTapHistory } from '../music/tapTempo';
+import { parseProgression } from '../parser/progression';
+import { createInitialState, createSong, exportSongs, generateSynthPresetId, importSongs, loadCachedState, saveCachedState } from '../state/song';
+import { fetchBootstrap, pushState } from '../state/remote';
+import { DRUM_PATTERNS, OSCILLATOR_TYPES, PLAYBACK_MODES, type AppState, type SessionUser, type Song, type SynthPreset } from '../types/app';
 import { REGISTER_OPTIONS } from '../utils/constants';
 
 type NoticeKind = 'info' | 'error';
+type SaveMode = 'immediate' | 'deferred' | 'none';
 
-export function mountApp(root: HTMLElement): void {
-  const state = safeLoadState();
+export async function mountApp(root: HTMLElement): Promise<void> {
+  root.innerHTML = `
+    <div class="app-shell">
+      <main class="layout">
+        <section class="panel"><div class="notice">読み込み中...</div></section>
+      </main>
+    </div>
+  `;
+
+  let state = createInitialState();
+  let session: SessionUser = { id: 'local-dev-user', email: 'local-dev@example.com' };
+  let lastNotice: { kind: NoticeKind; message: string } | null = null;
+
+  try {
+    const bootstrap = await fetchBootstrap();
+    state = bootstrap.state;
+    session = bootstrap.session;
+    saveCachedState(localStorage, state);
+  } catch (error) {
+    const cached = loadCachedState(localStorage);
+    if (cached) {
+      state = cached;
+      lastNotice = {
+        kind: 'error',
+        message: 'サーバー接続に失敗したため、一時キャッシュを表示しています',
+      };
+    } else {
+      lastNotice = {
+        kind: 'error',
+        message: error instanceof Error ? `初期読込に失敗しました: ${error.message}` : '初期読込に失敗しました',
+      };
+    }
+  }
+
   const transport = new Transport(getCurrentSong(state).bpm);
   const engine = new AudioEngine();
   const scheduler = new Scheduler(
@@ -43,8 +77,9 @@ export function mountApp(root: HTMLElement): void {
     },
   );
 
-  let lastNotice: { kind: NoticeKind; message: string } | null = null;
   let tapHistory: number[] = [];
+  let saveInFlight: Promise<void> | null = null;
+  let saveQueued = false;
 
   root.innerHTML = `
     <div class="app-shell">
@@ -59,6 +94,7 @@ export function mountApp(root: HTMLElement): void {
               <div>現在小節</div>
               <strong id="current-bar">1</strong>
               <div id="transport-state">stopped</div>
+              <div class="session-email" id="session-email"></div>
             </div>
           </div>
           <label class="stack stack-tight">
@@ -126,6 +162,7 @@ export function mountApp(root: HTMLElement): void {
 
   const currentBarEl = query<HTMLDivElement>('#current-bar', root);
   const transportStateEl = query<HTMLDivElement>('#transport-state', root);
+  const sessionEmailEl = query<HTMLDivElement>('#session-email', root);
   const titleInput = query<HTMLInputElement>('#song-title', root);
   const progressionText = query<HTMLTextAreaElement>('#progression-text', root);
   const bpmInput = query<HTMLInputElement>('#bpm', root);
@@ -158,8 +195,62 @@ export function mountApp(root: HTMLElement): void {
   setSelectOptions(bassRegisterSelect, REGISTER_OPTIONS);
   setSelectOptions(chordRegisterSelect, REGISTER_OPTIONS);
 
-  function persist(): void {
-    saveState(localStorage, state);
+  function setNotice(kind: NoticeKind, message: string): void {
+    lastNotice = { kind, message };
+  }
+
+  function touchState(date = new Date().toISOString()): void {
+    state.updatedAt = date;
+  }
+
+  function cacheState(): void {
+    saveCachedState(localStorage, state);
+  }
+
+  async function persistRemoteState(): Promise<void> {
+    const snapshot = structuredClone(state);
+
+    if (saveInFlight) {
+      saveQueued = true;
+      return;
+    }
+
+    saveInFlight = (async () => {
+      try {
+        const response = await pushState(snapshot);
+        session = response.session;
+        if (response.state.updatedAt >= state.updatedAt) {
+          state = response.state;
+          transport.setBpm(getCurrentSong(state).bpm, engine.currentTime);
+          scheduler.resetWindow();
+          cacheState();
+        }
+      } catch (error) {
+        setNotice('error', error instanceof Error ? `保存に失敗しました: ${error.message}` : '保存に失敗しました');
+      } finally {
+        saveInFlight = null;
+        render();
+        if (saveQueued) {
+          saveQueued = false;
+          void persistRemoteState();
+        }
+      }
+    })();
+
+    await saveInFlight;
+  }
+
+  function applyStateChange(mutator: () => void, saveMode: SaveMode): void {
+    mutator();
+    touchState();
+    transport.setBpm(getCurrentSong(state).bpm, engine.currentTime);
+    scheduler.resetWindow();
+    cacheState();
+    render();
+
+    if (saveMode === 'immediate') {
+      void persistRemoteState();
+    }
   }
 
   function render(): void {
@@ -194,6 +285,7 @@ export function mountApp(root: HTMLElement): void {
     masterVolume.value = String(song.masterVolume);
     chordVolume.value = String(song.chordVolume);
     drumVolume.value = String(song.drumVolume);
+    sessionEmailEl.textContent = session.email ?? session.id;
 
     engine.applySettings({
       bpm: song.bpm,
@@ -250,35 +342,41 @@ export function mountApp(root: HTMLElement): void {
     updatePreviewPlaybackIndicator(transport.getSnapshot(engine.currentTime).currentBar, transport.getSnapshot(engine.currentTime).state);
   }
 
-  function updateSong(mutator: (song: Song) => void): void {
-    const song = getCurrentSong(state);
-    mutator(song);
-    song.updatedAt = new Date().toISOString();
-    transport.setBpm(song.bpm, engine.currentTime);
-    scheduler.resetWindow();
-    persist();
-    render();
+  function updateSong(mutator: (song: Song) => void, saveMode: SaveMode = 'immediate'): void {
+    applyStateChange(() => {
+      const song = getCurrentSong(state);
+      mutator(song);
+      song.updatedAt = new Date().toISOString();
+    }, saveMode);
   }
 
-  function updateSynthPreset(mutator: (preset: SynthPreset) => void): void {
-    const synthPreset = getCurrentSynthPreset(state);
-    mutator(synthPreset);
-    synthPreset.name = normalizeSynthPresetName(synthPreset.name);
-    const song = getCurrentSong(state);
-    song.updatedAt = new Date().toISOString();
-    persist();
-    render();
+  function updateSynthPreset(mutator: (preset: SynthPreset) => void, saveMode: SaveMode = 'immediate'): void {
+    applyStateChange(() => {
+      const synthPreset = getCurrentSynthPreset(state);
+      mutator(synthPreset);
+      synthPreset.name = normalizeSynthPresetName(synthPreset.name);
+      getCurrentSong(state).updatedAt = new Date().toISOString();
+    }, saveMode);
   }
 
   titleInput.addEventListener('input', () => updateSong((song) => {
     song.title = titleInput.value || 'Untitled';
-  }));
+  }, 'deferred'));
+  titleInput.addEventListener('blur', () => {
+    void persistRemoteState();
+  });
+
   progressionText.addEventListener('input', () => updateSong((song) => {
     song.progressionText = progressionText.value;
-  }));
+  }, 'deferred'));
+  progressionText.addEventListener('blur', () => {
+    void persistRemoteState();
+  });
+
   bpmInput.addEventListener('input', () => updateSong((song) => {
     song.bpm = clampNumber(Number(bpmInput.value), 40, 240, 120);
   }));
+
   tapTempoButton.addEventListener('pointerdown', (event) => {
     event.preventDefault();
     const now = performance.now();
@@ -297,6 +395,7 @@ export function mountApp(root: HTMLElement): void {
     setNotice('info', `Tap Tempo: ${getCurrentSong(state).bpm} BPM`);
     render();
   });
+
   playbackModeSelect.addEventListener('change', () => updateSong((currentSong) => {
     currentSong.playbackMode = playbackModeSelect.value as Song['playbackMode'];
   }));
@@ -308,7 +407,10 @@ export function mountApp(root: HTMLElement): void {
   }));
   presetNameInput.addEventListener('input', () => updateSynthPreset((preset) => {
     preset.name = presetNameInput.value;
-  }));
+  }, 'deferred'));
+  presetNameInput.addEventListener('blur', () => {
+    void persistRemoteState();
+  });
   waveformSelect.addEventListener('change', () => updateSynthPreset((preset) => {
     preset.waveform = waveformSelect.value as SynthPreset['waveform'];
   }));
@@ -339,12 +441,14 @@ export function mountApp(root: HTMLElement): void {
 
   query<HTMLButtonElement>('#new-song-btn', root).addEventListener('click', () => {
     const song = createSong();
-    state.songs.unshift(song);
-    state.currentSongId = song.id;
-    persist();
+    applyStateChange(() => {
+      state.songs.unshift(song);
+      state.currentSongId = song.id;
+    }, 'immediate');
     setNotice('info', '新しい曲を作成しました');
     render();
   });
+
   previewNoteButton.addEventListener('click', async () => {
     await engine.ensureReady();
     engine.previewSingleNote(noteNameToMidi('C4'), getCurrentSynthPreset(state), 1.2);
@@ -359,6 +463,7 @@ export function mountApp(root: HTMLElement): void {
     setNotice('info', '編集中の音色で C の和音を試聴しました');
     render();
   });
+
   query<HTMLButtonElement>('#save-preset-btn', root).addEventListener('click', () => {
     const currentPreset = getCurrentSynthPreset(state);
     const duplicatedPreset: SynthPreset = {
@@ -366,10 +471,11 @@ export function mountApp(root: HTMLElement): void {
       id: generateSynthPresetId(),
       name: normalizeSynthPresetName(`${currentPreset.name} copy`),
     };
-    state.synthPresets.unshift(duplicatedPreset);
-    updateSong((song) => {
-      song.synthPresetId = duplicatedPreset.id;
-    });
+    applyStateChange(() => {
+      state.synthPresets.unshift(duplicatedPreset);
+      getCurrentSong(state).synthPresetId = duplicatedPreset.id;
+      getCurrentSong(state).updatedAt = new Date().toISOString();
+    }, 'immediate');
     setNotice('info', `音色 "${duplicatedPreset.name}" を保存しました`);
     render();
   });
@@ -380,9 +486,9 @@ export function mountApp(root: HTMLElement): void {
     if (!button) {
       return;
     }
-    state.currentSongId = button.dataset.songId ?? state.currentSongId;
-    persist();
-    render();
+    applyStateChange(() => {
+      state.currentSongId = button.dataset.songId ?? state.currentSongId;
+    }, 'immediate');
   });
 
   previewEl.addEventListener('click', (event) => {
@@ -479,10 +585,11 @@ export function mountApp(root: HTMLElement): void {
     const text = await file.text();
     try {
       const imported = importSongs(text);
-      state.synthPresets = mergeSynthPresets(state.synthPresets, imported.synthPresets);
-      state.songs = mergeSongs(state.songs, imported.songs);
-      state.currentSongId = imported.songs[0]?.id ?? state.currentSongId;
-      persist();
+      applyStateChange(() => {
+        state.synthPresets = mergeSynthPresets(state.synthPresets, imported.synthPresets);
+        state.songs = mergeSongs(state.songs, imported.songs);
+        state.currentSongId = imported.songs[0]?.id ?? state.currentSongId;
+      }, 'immediate');
       setNotice('info', `${imported.songs.length} 曲を取り込みました`);
       render();
     } catch (error) {
@@ -493,10 +600,6 @@ export function mountApp(root: HTMLElement): void {
     }
   });
 
-  function setNotice(kind: NoticeKind, message: string): void {
-    lastNotice = { kind, message };
-  }
-
   function tickUi(): void {
     const snapshot = transport.getSnapshot(engine.currentTime);
     currentBarEl.textContent = String(snapshot.currentBar);
@@ -504,6 +607,12 @@ export function mountApp(root: HTMLElement): void {
     updatePreviewPlaybackIndicator(snapshot.currentBar, snapshot.state);
     requestAnimationFrame(tickUi);
   }
+
+  window.addEventListener('beforeunload', () => {
+    if (saveQueued || saveInFlight) {
+      cacheState();
+    }
+  });
 
   render();
   tickUi();
@@ -534,14 +643,6 @@ function getCurrentSong(state: AppState): Song {
 function getCurrentSynthPreset(state: AppState): SynthPreset {
   const song = getCurrentSong(state);
   return state.synthPresets.find((preset) => preset.id === song.synthPresetId) ?? state.synthPresets[0];
-}
-
-function safeLoadState(): AppState {
-  try {
-    return loadState(localStorage);
-  } catch {
-    return createInitialState();
-  }
 }
 
 function setSelectOptions(select: HTMLSelectElement, values: readonly string[]): void {

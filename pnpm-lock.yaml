@@ -7,6 +7,10 @@ settings:
 importers:
 
   .:
+    dependencies:
+      '@cloudflare/pages-plugin-cloudflare-access':
+        specifier: ^1.0.5
+        version: 1.0.5
     devDependencies:
       '@eslint/js':
         specifier: ^9.24.0
@@ -40,6 +44,9 @@ importers:
         version: 3.2.4(@types/node@22.19.15)
 
 packages:
+
+  '@cloudflare/pages-plugin-cloudflare-access@1.0.5':
+    resolution: {integrity: sha512-EGVSaUoFLxKfds2tgLWGzIk/xXLO2RqwZDUKsH/olXdNOckOMr4ShR8Pt1AJpZrakCDNiDVXmfLDJYTufxuQRw==}
 
   '@esbuild/aix-ppc64@0.25.12':
     resolution: {integrity: sha512-Hhmwd6CInZ3dwpuGTF8fJG6yoWmsToE+vYgD4nytZVxcu1ulHpUQRAB1UJ8+N1Am3Mz4+xOByoQoSZf4D+CpkA==}
@@ -1021,6 +1028,8 @@ packages:
     engines: {node: '>=10'}
 
 snapshots:
+
+  '@cloudflare/pages-plugin-cloudflare-access@1.0.5': {}
 
   '@esbuild/aix-ppc64@0.25.12':
     optional: true

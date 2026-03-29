@@ -61,7 +61,13 @@ export interface Song extends SongSettings {
 }
 
 export interface AppState {
+  updatedAt: string;
   songs: Song[];
   currentSongId: string;
   synthPresets: SynthPreset[];
+}
+
+export interface SessionUser {
+  id: string;
+  email: string | null;
 }

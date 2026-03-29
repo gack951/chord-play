@@ -1,10 +1,11 @@
 import { DEFAULT_SYNTH_PRESET_ID, createDefaultSynthPreset, normalizeSynthPresetName } from '../audio/synthPresets';
 import type { AppState, Song, SongSettings, SynthPreset } from '../types/app';
 
-export const STORAGE_KEY = 'chord-play-state-v1';
+export const CACHE_KEY = 'chord-play-cache-v2';
 export const EXPORT_SCHEMA_VERSION = 2;
 
 const LEGACY_EXPORT_SCHEMA_VERSION = 1;
+const CACHE_TTL_MS = 1000 * 60 * 60 * 24 * 7;
 
 export const DEFAULT_SETTINGS: SongSettings = {
   bpm: 120,
@@ -23,6 +24,11 @@ export interface ExportBundle {
   exportedAt: string;
   songs: Song[];
   synthPresets: SynthPreset[];
+}
+
+interface CacheEnvelope {
+  cachedAt: string;
+  state: AppState;
 }
 
 interface LegacySong extends Omit<Song, 'synthPresetId'> {
@@ -89,9 +95,10 @@ function normalizeSong(input: unknown): Song {
     bpm: Number(input.bpm),
     playbackMode: String(input.playbackMode ?? ''),
     drumPattern: String(input.drumPattern ?? ''),
-    synthPresetId: typeof input.synthPresetId === 'string' && input.synthPresetId !== ''
-      ? input.synthPresetId
-      : DEFAULT_SYNTH_PRESET_ID,
+    synthPresetId:
+      typeof input.synthPresetId === 'string' && input.synthPresetId !== ''
+        ? input.synthPresetId
+        : DEFAULT_SYNTH_PRESET_ID,
     bassRegister: String(input.bassRegister ?? ''),
     chordRegister: String(input.chordRegister ?? ''),
     masterVolume: Number(input.masterVolume),
@@ -111,7 +118,7 @@ export function defaultSongTitle(now = new Date()): string {
 }
 
 export function generateSongId(): string {
-  const cryptoApi = globalThis.crypto as Crypto | undefined;
+  const cryptoApi = globalThis.crypto as { randomUUID?: () => string } | undefined;
 
   if (typeof cryptoApi?.randomUUID === 'function') {
     return cryptoApi.randomUUID();
@@ -139,10 +146,11 @@ export function createSong(seed?: Partial<Song>): Song {
   };
 }
 
-export function createInitialState(): AppState {
+export function createInitialState(now = new Date().toISOString()): AppState {
   const synthPresets = [createDefaultSynthPreset()];
-  const song = createSong();
+  const song = createSong({ createdAt: now, updatedAt: now });
   return {
+    updatedAt: now,
     songs: [song],
     currentSongId: song.id,
     synthPresets,
@@ -202,14 +210,15 @@ export function validateSong(input: unknown): Song {
   return song;
 }
 
-function normalizeState(input: unknown): AppState {
+export function normalizeAppState(input: unknown): AppState {
   if (!isRecord(input)) {
     return createInitialState();
   }
 
+  const updatedAt = typeof input.updatedAt === 'string' && input.updatedAt !== '' ? input.updatedAt : new Date().toISOString();
   const synthPresets = normalizeSynthPresets(input.synthPresets);
   if (!Array.isArray(input.songs)) {
-    return createInitialState();
+    return createInitialState(updatedAt);
   }
 
   const songs = input.songs.map((song) => repairSongPresetReference(validateSong(song), synthPresets));
@@ -219,28 +228,46 @@ function normalizeState(input: unknown): AppState {
       : songs[0]?.id;
 
   if (!currentSongId) {
-    return createInitialState();
+    return createInitialState(updatedAt);
   }
 
-  return { songs, currentSongId, synthPresets };
+  return { updatedAt, songs, currentSongId, synthPresets };
 }
 
-export function loadState(storage: Storage): AppState {
-  const raw = storage.getItem(STORAGE_KEY);
+export function loadCachedState(storage: Storage): AppState | null {
+  const raw = storage.getItem(CACHE_KEY);
   if (!raw) {
-    return createInitialState();
+    return null;
   }
 
   try {
-    const parsed = JSON.parse(raw);
-    return normalizeState(parsed);
+    const parsed = JSON.parse(raw) as CacheEnvelope;
+    if (!parsed?.cachedAt || !parsed.state) {
+      return null;
+    }
+
+    const cachedAt = Date.parse(parsed.cachedAt);
+    if (!Number.isFinite(cachedAt) || Date.now() - cachedAt > CACHE_TTL_MS) {
+      storage.removeItem(CACHE_KEY);
+      return null;
+    }
+
+    return normalizeAppState(parsed.state);
   } catch {
-    return createInitialState();
+    return null;
   }
 }
 
-export function saveState(storage: Storage, state: AppState): void {
-  storage.setItem(STORAGE_KEY, JSON.stringify(state));
+export function saveCachedState(storage: Storage, state: AppState): void {
+  const envelope: CacheEnvelope = {
+    cachedAt: new Date().toISOString(),
+    state,
+  };
+  storage.setItem(CACHE_KEY, JSON.stringify(envelope));
+}
+
+export function clearCachedState(storage: Storage): void {
+  storage.removeItem(CACHE_KEY);
 }
 
 export function exportSongs(songs: Song[], synthPresets: SynthPreset[], includeAllPresets = false): string {

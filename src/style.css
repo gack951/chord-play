@@ -72,6 +72,13 @@ textarea {
   color: var(--accent-strong);
 }
 
+.session-email {
+  margin-top: 6px;
+  font-size: 0.75rem;
+  color: rgba(29, 29, 29, 0.72);
+  word-break: break-all;
+}
+
 .layout {
   display: grid;
   gap: 10px;
