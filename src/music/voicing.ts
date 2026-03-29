@@ -6,6 +6,8 @@ export interface ChordEvent {
   startBeat: number;
   durationBeats: number;
   midi: number[];
+  chordLabel: string;
+  sourceToken: string;
 }
 
 const RELEASE_GAP_BEATS = 0.125;
@@ -77,19 +79,26 @@ export function barsToChordEvents(
       return;
     }
 
+    const chord = slot.chord;
     const startBeat = slot.actualStartBeat;
     const endBeat = slot.actualEndBeat;
     const durationBeats = endBeat - startBeat;
     const midi = buildChordMidiNotes(
-      slot.chord.root,
-      slot.chord.intervals,
-      slot.chord.bass,
+      chord.root,
+      chord.intervals,
+      chord.bass,
       bassRegister,
       chordRegister,
     );
 
     if (mode === 'block') {
-      events.push({ startBeat, durationBeats, midi });
+      events.push({
+        startBeat,
+        durationBeats,
+        midi,
+        chordLabel: chord.label,
+        sourceToken: slot.token,
+      });
       return;
     }
 
@@ -104,13 +113,21 @@ export function barsToChordEvents(
     const steps = Math.max(ordered.length, 1);
     const stepDuration = durationBeats / Math.max(steps, 2);
 
-    events.push({ startBeat, durationBeats, midi: [midi[0]] });
+    events.push({
+      startBeat,
+      durationBeats,
+      midi: [midi[0]],
+      chordLabel: chord.label,
+      sourceToken: slot.token,
+    });
     ordered.forEach((note, arpIndex) => {
       const noteStartBeat = startBeat + arpIndex * stepDuration;
       events.push({
         startBeat: noteStartBeat,
         durationBeats: Math.max(endBeat - noteStartBeat, 0),
         midi: [note],
+        chordLabel: chord.label,
+        sourceToken: slot.token,
       });
     });
   });

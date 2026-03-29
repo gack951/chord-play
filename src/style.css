@@ -140,6 +140,10 @@ textarea {
   margin-top: 8px;
 }
 
+.preset-actions {
+  margin-top: 10px;
+}
+
 button {
   border: 0;
   border-radius: 12px;

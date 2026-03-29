@@ -2,7 +2,7 @@
 
 ## Goal
 
-Lengthen chord sustain so notes keep sounding until just before the next chord or rest, independent of nominal slot length.
+Replace the fixed instrument list with a configurable ADSR synthesizer, persist synth presets locally, include presets in JSON import/export, and allow songs to select from saved presets.
 
 ## Constraints
 
@@ -12,42 +12,69 @@ Lengthen chord sustain so notes keep sounding until just before the next chord o
 - Local persistence only
 - Timing stability and low-latency sync take priority over synthesis realism
 - Browser automation is required for UI-facing changes
-- Keep the implementation modular across parser, music, audio, state, and UI
+- Keep the implementation modular across audio, state, and UI
+- The old first three instruments are removed; the default preset should match current `debug-hold` behavior as closely as practical
 
 ## Current State
 
-- Parser, transport, preview click cue/resume, anticipation, and playback are implemented
-- Remaining playback issue:
-  - note lengths still follow relatively short slot-derived durations
-  - user wants sustain to continue until 0.125 beats before the next chord or rest
+- Songs currently store a fixed `instrument` string
+- Local storage and JSON export contain only song data
+- AudioEngine derives tone directly from hard-coded instrument branches
+- UI exposes a simple instrument select with four built-in options
 
 ## Target Design
 
-### Timing
+### Data Model
 
-- Derive each slot's release boundary from the next slot start or progression end
-- Subtract a 0.125-beat gap before the next chord/rest
-- Keep anticipation timing compatible with the new sustain rule
-- Apply the longer sustain to block and arpeggio note events
+- Introduce synth preset entities with:
+  - `id`
+  - `name`
+  - oscillator waveform
+  - filter cutoff
+  - attack
+  - decay
+  - sustain
+  - release
+- Store presets alongside songs in app state
+- Songs store `synthPresetId` instead of fixed instrument IDs
+- Bump export schema version and keep practical backward compatibility for earlier song-only exports
+
+### Audio
+
+- Replace hard-coded instrument branches with parameter-driven ADSR scheduling
+- Use the new default preset as the migration target for old songs
+- Keep note logging and timing behavior intact
+
+### UI
+
+- Replace the instrument select with a saved preset select
+- Add editable ADSR controls and waveform/filter parameters
+- Add a save/update preset action so edited values persist locally
+- Keep mobile usability acceptable without hiding transport controls
 
 ### Verification
 
-- Add/update unit coverage for the new sustain timing
-- Keep browser verification green to ensure no runtime regressions
-- Update `README.md` timing notes
+- Update state tests for schema migration and preset import/export
+- Update browser tests for preset selection/edit/save/import paths
+- Keep transport and parser coverage green
 
 ## Files To Change
 
 - `PLANS.md`
 - `README.md`
-- `src/music/**`
+- `src/types/**`
+- `src/state/**`
+- `src/audio/**`
+- `src/ui/**`
 - `test/**`
+- `e2e/**`
 
 ## Risks
 
-- Longer sustain can cause unintended overlap if release boundaries are wrong
-- Arpeggio note durations must remain positive after subtracting the release gap
-- Final-chord release should still stop cleanly before transport end
+- Schema migration can break existing local data if defaults are wrong
+- Songs can reference missing presets after import/merge unless repaired
+- ADSR release settings can unintentionally reintroduce short perceived note lengths
+- UI growth can hurt mobile layout if controls become too dense
 
 ## Validation Steps
 
@@ -59,5 +86,6 @@ Lengthen chord sustain so notes keep sounding until just before the next chord o
 
 ## Rollback / Fallback Strategy
 
-- Keep the change localized to event-duration generation in music timing
-- Preserve start-time generation and only revise release/end calculation if needed
+- Keep preset definitions centralized so migration can fall back to one built-in default preset
+- Preserve import support for prior schema versions instead of hard-failing old exports
+- If preset CRUD becomes too large, keep a single editable saved preset path first rather than a larger redesign

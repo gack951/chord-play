@@ -14,6 +14,8 @@ describe('music voicing', () => {
     const events = barsToChordEvents(parsed.validBars, 'arp-up-8', 'C3', 'C4');
     expect(events.length).toBeGreaterThan(2);
     expect(events[0]?.midi).toHaveLength(1);
+    expect(events[0]?.chordLabel).toBe('C');
+    expect(events[0]?.sourceToken).toBe('C');
   });
 
   it('shifts anticipated chords 0.5 beats early and extends durations', () => {

@@ -4,8 +4,8 @@ export type PlaybackMode = (typeof PLAYBACK_MODES)[number];
 export const DRUM_PATTERNS = ['metronome', 'four-on-the-floor', '8beat', '16beat'] as const;
 export type DrumPattern = (typeof DRUM_PATTERNS)[number];
 
-export const INSTRUMENTS = ['sine-pad', 'triangle-keys', 'square-organ'] as const;
-export type InstrumentId = (typeof INSTRUMENTS)[number];
+export const OSCILLATOR_TYPES = ['sine', 'triangle', 'square', 'sawtooth'] as const;
+export type OscillatorTypeId = (typeof OSCILLATOR_TYPES)[number];
 
 export type RegisterName =
   | 'C2'
@@ -31,11 +31,20 @@ export type RegisterName =
   | 'B4'
   | 'C5';
 
+export interface SynthPreset {
+  id: string;
+  name: string;
+  waveform: OscillatorTypeId;
+  filterCutoff: number;
+  attack: number;
+  release: number;
+}
+
 export interface SongSettings {
   bpm: number;
   playbackMode: PlaybackMode;
   drumPattern: DrumPattern;
-  instrument: InstrumentId;
+  synthPresetId: string;
   bassRegister: RegisterName;
   chordRegister: RegisterName;
   masterVolume: number;
@@ -54,4 +63,5 @@ export interface Song extends SongSettings {
 export interface AppState {
   songs: Song[];
   currentSongId: string;
+  synthPresets: SynthPreset[];
 }

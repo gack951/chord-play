@@ -55,6 +55,12 @@ export function midiToFrequency(midi: number): number {
   return 440 * 2 ** ((midi - 69) / 12);
 }
 
+export function midiToNoteName(midi: number): string {
+  const pitchClass = SEMITONE_TO_NOTE[((midi % 12) + 12) % 12];
+  const octave = Math.floor(midi / 12) - 1;
+  return `${pitchClass}${octave}`;
+}
+
 export function placePitchClassAtOrAbove(note: string, registerMidi: number): number {
   const semitone = pitchClassToSemitone(note);
   let midi = Math.floor(registerMidi / 12) * 12 + semitone;

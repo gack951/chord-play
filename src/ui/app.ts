@@ -1,11 +1,14 @@
 import '../style.css';
+import { normalizeSynthPresetName } from '../audio/synthPresets';
 import { AudioEngine } from '../audio/engine';
+import { buildChordMidiNotes } from '../music/voicing';
 import { calculateTapTempo, normalizeTapHistory } from '../music/tapTempo';
 import { Scheduler } from '../audio/scheduler';
 import { Transport } from '../audio/transport';
 import { parseProgression } from '../parser/progression';
-import { createInitialState, createSong, exportSongs, importSongs, loadState, saveState } from '../state/song';
-import { DRUM_PATTERNS, INSTRUMENTS, PLAYBACK_MODES, type AppState, type Song } from '../types/app';
+import { noteNameToMidi } from '../music/note';
+import { createInitialState, createSong, exportSongs, generateSynthPresetId, importSongs, loadState, saveState } from '../state/song';
+import { DRUM_PATTERNS, OSCILLATOR_TYPES, PLAYBACK_MODES, type AppState, type Song, type SynthPreset } from '../types/app';
 import { REGISTER_OPTIONS } from '../utils/constants';
 
 type NoticeKind = 'info' | 'error';
@@ -26,7 +29,7 @@ export function mountApp(root: HTMLElement): void {
         chordVolume: song.chordVolume,
         drumVolume: song.drumVolume,
         playbackMode: song.playbackMode,
-        instrument: song.instrument,
+        synthPreset: getCurrentSynthPreset(state),
         bassRegister: song.bassRegister,
         chordRegister: song.chordRegister,
         drumPattern: song.drumPattern,
@@ -89,12 +92,22 @@ export function mountApp(root: HTMLElement): void {
           <div class="controls-grid">
             <label class="stack stack-tight"><span>再生モード</span><select id="playback-mode"></select></label>
             <label class="stack stack-tight"><span>ドラム</span><select id="drum-pattern"></select></label>
-            <label class="stack stack-tight"><span>楽器</span><select id="instrument"></select></label>
+            <label class="stack stack-tight"><span>音色プリセット</span><select id="synth-preset"></select></label>
+            <label class="stack stack-tight"><span>音色名</span><input id="preset-name" type="text" /></label>
+            <label class="stack stack-tight"><span>波形</span><select id="waveform"></select></label>
+            <label class="stack stack-tight"><span>Cutoff Hz</span><input id="filter-cutoff" type="number" min="120" max="12000" step="10" /></label>
+            <label class="stack stack-tight"><span>Attack s</span><input id="attack" type="number" min="0" max="2" step="0.001" /></label>
+            <label class="stack stack-tight"><span>Release s</span><input id="release" type="number" min="0.001" max="2" step="0.001" /></label>
             <label class="stack stack-tight"><span>ベース音域</span><select id="bass-register"></select></label>
             <label class="stack stack-tight"><span>コード音域</span><select id="chord-register"></select></label>
             <label class="stack stack-tight"><span>Master</span><input id="master-volume" type="range" min="0" max="1" step="0.01" /></label>
             <label class="stack stack-tight"><span>Chord</span><input id="chord-volume" type="range" min="0" max="1" step="0.01" /></label>
             <label class="stack stack-tight"><span>Drum</span><input id="drum-volume" type="range" min="0" max="1" step="0.01" /></label>
+          </div>
+          <div class="songs-toolbar preset-actions">
+            <button id="preview-note-btn" type="button">C4 単音</button>
+            <button id="preview-chord-btn" type="button">C 和音</button>
+            <button id="save-preset-btn">新規音色として保存</button>
           </div>
         </section>
         <section class="panel songs-panel">
@@ -119,7 +132,12 @@ export function mountApp(root: HTMLElement): void {
   const tapTempoButton = query<HTMLButtonElement>('#tap-tempo-btn', root);
   const playbackModeSelect = query<HTMLSelectElement>('#playback-mode', root);
   const drumPatternSelect = query<HTMLSelectElement>('#drum-pattern', root);
-  const instrumentSelect = query<HTMLSelectElement>('#instrument', root);
+  const synthPresetSelect = query<HTMLSelectElement>('#synth-preset', root);
+  const presetNameInput = query<HTMLInputElement>('#preset-name', root);
+  const waveformSelect = query<HTMLSelectElement>('#waveform', root);
+  const filterCutoffInput = query<HTMLInputElement>('#filter-cutoff', root);
+  const attackInput = query<HTMLInputElement>('#attack', root);
+  const releaseInput = query<HTMLInputElement>('#release', root);
   const bassRegisterSelect = query<HTMLSelectElement>('#bass-register', root);
   const chordRegisterSelect = query<HTMLSelectElement>('#chord-register', root);
   const masterVolume = query<HTMLInputElement>('#master-volume', root);
@@ -131,10 +149,12 @@ export function mountApp(root: HTMLElement): void {
   const noticeEl = query<HTMLDivElement>('#notice', root);
   const songListEl = query<HTMLDivElement>('#song-list', root);
   const importFileInput = query<HTMLInputElement>('#import-file', root);
+  const previewNoteButton = query<HTMLButtonElement>('#preview-note-btn', root);
+  const previewChordButton = query<HTMLButtonElement>('#preview-chord-btn', root);
 
   setSelectOptions(playbackModeSelect, PLAYBACK_MODES);
   setSelectOptions(drumPatternSelect, DRUM_PATTERNS);
-  setSelectOptions(instrumentSelect, INSTRUMENTS);
+  setSelectOptions(waveformSelect, OSCILLATOR_TYPES);
   setSelectOptions(bassRegisterSelect, REGISTER_OPTIONS);
   setSelectOptions(chordRegisterSelect, REGISTER_OPTIONS);
 
@@ -144,6 +164,7 @@ export function mountApp(root: HTMLElement): void {
 
   function render(): void {
     const song = getCurrentSong(state);
+    const synthPreset = getCurrentSynthPreset(state);
     const parseResult = parseProgression(song.progressionText);
     const playbackBarIndexMap = new Map<number, number>();
     parseResult.validBars.forEach((bar, playbackIndex) => {
@@ -155,7 +176,19 @@ export function mountApp(root: HTMLElement): void {
     bpmInput.value = String(song.bpm);
     playbackModeSelect.value = song.playbackMode;
     drumPatternSelect.value = song.drumPattern;
-    instrumentSelect.value = song.instrument;
+    setNamedOptions(
+      synthPresetSelect,
+      state.synthPresets.map((preset) => ({
+        value: preset.id,
+        label: preset.name,
+      })),
+    );
+    synthPresetSelect.value = song.synthPresetId;
+    presetNameInput.value = synthPreset.name;
+    waveformSelect.value = synthPreset.waveform;
+    filterCutoffInput.value = String(synthPreset.filterCutoff);
+    attackInput.value = synthPreset.attack.toFixed(3);
+    releaseInput.value = synthPreset.release.toFixed(3);
     bassRegisterSelect.value = song.bassRegister;
     chordRegisterSelect.value = song.chordRegister;
     masterVolume.value = String(song.masterVolume);
@@ -166,7 +199,7 @@ export function mountApp(root: HTMLElement): void {
       bpm: song.bpm,
       playbackMode: song.playbackMode,
       drumPattern: song.drumPattern,
-      instrument: song.instrument,
+      synthPreset,
       bassRegister: song.bassRegister,
       chordRegister: song.chordRegister,
       masterVolume: song.masterVolume,
@@ -227,6 +260,16 @@ export function mountApp(root: HTMLElement): void {
     render();
   }
 
+  function updateSynthPreset(mutator: (preset: SynthPreset) => void): void {
+    const synthPreset = getCurrentSynthPreset(state);
+    mutator(synthPreset);
+    synthPreset.name = normalizeSynthPresetName(synthPreset.name);
+    const song = getCurrentSong(state);
+    song.updatedAt = new Date().toISOString();
+    persist();
+    render();
+  }
+
   titleInput.addEventListener('input', () => updateSong((song) => {
     song.title = titleInput.value || 'Untitled';
   }));
@@ -260,8 +303,23 @@ export function mountApp(root: HTMLElement): void {
   drumPatternSelect.addEventListener('change', () => updateSong((currentSong) => {
     currentSong.drumPattern = drumPatternSelect.value as Song['drumPattern'];
   }));
-  instrumentSelect.addEventListener('change', () => updateSong((currentSong) => {
-    currentSong.instrument = instrumentSelect.value as Song['instrument'];
+  synthPresetSelect.addEventListener('change', () => updateSong((currentSong) => {
+    currentSong.synthPresetId = synthPresetSelect.value;
+  }));
+  presetNameInput.addEventListener('input', () => updateSynthPreset((preset) => {
+    preset.name = presetNameInput.value;
+  }));
+  waveformSelect.addEventListener('change', () => updateSynthPreset((preset) => {
+    preset.waveform = waveformSelect.value as SynthPreset['waveform'];
+  }));
+  filterCutoffInput.addEventListener('input', () => updateSynthPreset((preset) => {
+    preset.filterCutoff = clampNumber(Number(filterCutoffInput.value), 120, 12000, 3200);
+  }));
+  attackInput.addEventListener('input', () => updateSynthPreset((preset) => {
+    preset.attack = clampNumber(Number(attackInput.value), 0, 2, 0.01);
+  }));
+  releaseInput.addEventListener('input', () => updateSynthPreset((preset) => {
+    preset.release = clampNumber(Number(releaseInput.value), 0.001, 2, 0.005);
   }));
   bassRegisterSelect.addEventListener('change', () => updateSong((currentSong) => {
     currentSong.bassRegister = bassRegisterSelect.value as Song['bassRegister'];
@@ -285,6 +343,34 @@ export function mountApp(root: HTMLElement): void {
     state.currentSongId = song.id;
     persist();
     setNotice('info', '新しい曲を作成しました');
+    render();
+  });
+  previewNoteButton.addEventListener('click', async () => {
+    await engine.ensureReady();
+    engine.previewSingleNote(noteNameToMidi('C4'), getCurrentSynthPreset(state), 1.2);
+    setNotice('info', '編集中の音色で C4 を試聴しました');
+    render();
+  });
+  previewChordButton.addEventListener('click', async () => {
+    await engine.ensureReady();
+    const song = getCurrentSong(state);
+    const midiNotes = buildChordMidiNotes('C', [0, 4, 7], null, song.bassRegister, song.chordRegister);
+    engine.previewSynthNotes(midiNotes, getCurrentSynthPreset(state), 1.2);
+    setNotice('info', '編集中の音色で C の和音を試聴しました');
+    render();
+  });
+  query<HTMLButtonElement>('#save-preset-btn', root).addEventListener('click', () => {
+    const currentPreset = getCurrentSynthPreset(state);
+    const duplicatedPreset: SynthPreset = {
+      ...currentPreset,
+      id: generateSynthPresetId(),
+      name: normalizeSynthPresetName(`${currentPreset.name} copy`),
+    };
+    state.synthPresets.unshift(duplicatedPreset);
+    updateSong((song) => {
+      song.synthPresetId = duplicatedPreset.id;
+    });
+    setNotice('info', `音色 "${duplicatedPreset.name}" を保存しました`);
     render();
   });
 
@@ -370,13 +456,13 @@ export function mountApp(root: HTMLElement): void {
   syncButton.addEventListener('mousedown', handleSyncPress);
 
   query<HTMLButtonElement>('#export-current-btn', root).addEventListener('click', () => {
-    downloadJson(exportSongs([getCurrentSong(state)]), `${slugify(getCurrentSong(state).title)}.json`);
+    downloadJson(exportSongs([getCurrentSong(state)], state.synthPresets), `${slugify(getCurrentSong(state).title)}.json`);
     setNotice('info', '現在の曲を JSON 出力しました');
     render();
   });
 
   query<HTMLButtonElement>('#export-all-btn', root).addEventListener('click', () => {
-    downloadJson(exportSongs(state.songs), 'chord-play-all.json');
+    downloadJson(exportSongs(state.songs, state.synthPresets, true), 'chord-play-all.json');
     setNotice('info', '全曲を JSON 出力しました');
     render();
   });
@@ -393,10 +479,11 @@ export function mountApp(root: HTMLElement): void {
     const text = await file.text();
     try {
       const imported = importSongs(text);
-      state.songs = mergeSongs(state.songs, imported);
-      state.currentSongId = imported[0]?.id ?? state.currentSongId;
+      state.synthPresets = mergeSynthPresets(state.synthPresets, imported.synthPresets);
+      state.songs = mergeSongs(state.songs, imported.songs);
+      state.currentSongId = imported.songs[0]?.id ?? state.currentSongId;
       persist();
-      setNotice('info', `${imported.length} 曲を取り込みました`);
+      setNotice('info', `${imported.songs.length} 曲を取り込みました`);
       render();
     } catch (error) {
       setNotice('error', error instanceof Error ? error.message : 'インポートに失敗しました');
@@ -444,6 +531,11 @@ function getCurrentSong(state: AppState): Song {
   return state.songs.find((song) => song.id === state.currentSongId) ?? state.songs[0];
 }
 
+function getCurrentSynthPreset(state: AppState): SynthPreset {
+  const song = getCurrentSong(state);
+  return state.synthPresets.find((preset) => preset.id === song.synthPresetId) ?? state.synthPresets[0];
+}
+
 function safeLoadState(): AppState {
   try {
     return loadState(localStorage);
@@ -454,6 +546,12 @@ function safeLoadState(): AppState {
 
 function setSelectOptions(select: HTMLSelectElement, values: readonly string[]): void {
   select.innerHTML = values.map((value) => `<option value="${value}">${value}</option>`).join('');
+}
+
+function setNamedOptions(select: HTMLSelectElement, values: Array<{ value: string; label: string }>): void {
+  select.innerHTML = values
+    .map((value) => `<option value="${escapeHtml(value.value)}">${escapeHtml(value.label)}</option>`)
+    .join('');
 }
 
 function query<T extends HTMLElement>(selector: string, root: ParentNode): T {
@@ -496,4 +594,12 @@ function mergeSongs(existing: Song[], imported: Song[]): Song[] {
     map.set(song.id, song);
   });
   return Array.from(map.values()).sort((left, right) => right.updatedAt.localeCompare(left.updatedAt));
+}
+
+function mergeSynthPresets(existing: SynthPreset[], imported: SynthPreset[]): SynthPreset[] {
+  const map = new Map(existing.map((preset) => [preset.id, preset]));
+  imported.forEach((preset) => {
+    map.set(preset.id, preset);
+  });
+  return Array.from(map.values()).sort((left, right) => left.name.localeCompare(right.name, 'ja'));
 }

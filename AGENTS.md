@@ -648,6 +648,7 @@ Because Codex CLI may be invoked many times on this repository:
 
 - keep documentation updated when architecture changes
 - keep `README.md` and any developer notes aligned with implementation
+- if `README.md` contains user-facing feature descriptions, update those descriptions whenever related specs or behavior change
 - if work is partial, leave the repository in a resumable state
 - when stopping mid-task, record:
   - what was completed

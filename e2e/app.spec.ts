@@ -31,6 +31,8 @@ test('主要 UI が表示され、入力と transport が動作する', async ({
   await expect(page.locator('#parse-errors')).toBeAttached();
   await expect(page.locator('#sync-btn')).toBeVisible();
   await expect(page.locator('#song-list')).toBeVisible();
+  await expect(page.locator('#synth-preset')).toBeVisible();
+  await expect(page.locator('#attack')).toBeVisible();
 
   await page.locator('#progression-text').fill('C | Am | F | G');
   await expect(page.locator('.bar-card')).toHaveCount(4);
@@ -57,7 +59,14 @@ test('主要 UI が表示され、入力と transport が動作する', async ({
   expect(tappedBpm).toBeLessThanOrEqual(130);
   await page.locator('#playback-mode').selectOption('arp-updown-8');
   await page.locator('#drum-pattern').selectOption('16beat');
-  await page.locator('#instrument').selectOption('square-organ');
+  await page.locator('#waveform').selectOption('square');
+  await page.locator('#filter-cutoff').fill('2800');
+  await page.locator('#attack').fill('0.020');
+  await page.locator('#release').fill('0.010');
+  await page.locator('#preview-note-btn').click();
+  await expect(page.locator('#notice')).toContainText('C4');
+  await page.locator('#preview-chord-btn').click();
+  await expect(page.locator('#notice')).toContainText('C の和音');
   await page.locator('#bass-register').selectOption('E3');
   await page.locator('#chord-register').selectOption('G4');
 
@@ -136,16 +145,24 @@ test('保存・再読込・import/export が動作し、無効 JSON を拒否す
 
   await page.locator('#song-title').fill('Persisted Song');
   await page.locator('#progression-text').fill('C | F | G | C');
+  await page.locator('#preset-name').fill('Persist Hold');
+  await page.locator('#waveform').selectOption('sawtooth');
+  await page.locator('#attack').fill('0.015');
+  await page.locator('#save-preset-btn').click();
+  await expect(page.locator('#synth-preset option')).toHaveCount(2);
   await page.reload();
 
   await expect(page.locator('#song-title')).toHaveValue('Persisted Song');
   await expect(page.locator('#progression-text')).toHaveValue('C | F | G | C');
+  await expect(page.locator('#preset-name')).toHaveValue('Persist Hold copy');
+  await expect(page.locator('#waveform')).toHaveValue('sawtooth');
 
   await page.locator('#new-song-btn').click();
   await expect(page.locator('.song-item')).toHaveCount(2);
   await page.locator('#song-title').fill('Second Song');
   await page.locator('.song-item').filter({ hasText: 'Persisted Song' }).click();
   await expect(page.locator('#song-title')).toHaveValue('Persisted Song');
+  await expect(page.locator('#preset-name')).toHaveValue('Persist Hold copy');
 
   const [download] = await Promise.all([
     page.waitForEvent('download'),
@@ -154,7 +171,7 @@ test('保存・再読込・import/export が動作し、無効 JSON を拒否す
   expect(download.suggestedFilename()).toContain('.json');
 
   const validImport = JSON.stringify({
-    schemaVersion: 1,
+    schemaVersion: 2,
     exportedAt: new Date('2026-03-28T00:00:00Z').toISOString(),
     songs: [
       {
@@ -166,12 +183,22 @@ test('保存・再読込・import/export が動作し、無効 JSON を拒否す
         bpm: 120,
         playbackMode: 'block',
         drumPattern: 'metronome',
-        instrument: 'triangle-keys',
+        synthPresetId: 'preset-imported',
         bassRegister: 'C3',
         chordRegister: 'C4',
         masterVolume: 0.8,
         chordVolume: 0.75,
         drumVolume: 0.65,
+      },
+    ],
+    synthPresets: [
+      {
+        id: 'preset-imported',
+        name: 'Imported Preset',
+        waveform: 'triangle',
+        filterCutoff: 3100,
+        attack: 0.01,
+        release: 0.005,
       },
     ],
   });
@@ -183,6 +210,8 @@ test('保存・再読込・import/export が動作し、無効 JSON を拒否す
   });
   await expect(page.locator('#notice')).toContainText('取り込みました');
   await expect(page.locator('.song-item').filter({ hasText: 'Imported Song' })).toHaveCount(1);
+  await page.locator('.song-item').filter({ hasText: 'Imported Song' }).click();
+  await expect(page.locator('#preset-name')).toHaveValue('Imported Preset');
 
   await page.locator('#import-file').setInputFiles({
     name: 'invalid-import.json',
@@ -207,7 +236,9 @@ test('複数回 render 後も単一操作で duplicate handling が起きない'
   await page.locator('#bpm').fill('128');
   await page.locator('#playback-mode').selectOption('arp-down-8');
   await page.locator('#drum-pattern').selectOption('8beat');
-  await page.locator('#instrument').selectOption('sine-pad');
+  await page.locator('#waveform').selectOption('sine');
+  await page.locator('#filter-cutoff').fill('2600');
+  await page.locator('#attack').fill('0.030');
   await page.locator('#bass-register').selectOption('D3');
   await page.locator('#chord-register').selectOption('E4');
   await page.locator('#master-volume').fill('0.72');

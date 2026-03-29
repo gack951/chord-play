@@ -1,7 +1,7 @@
 import { barsToChordEvents } from '../music/voicing';
 import { midiToFrequency } from '../music/note';
 import type { ParsedBar } from '../types/music';
-import type { DrumPattern, InstrumentId, PlaybackMode, RegisterName } from '../types/app';
+import type { DrumPattern, PlaybackMode, RegisterName, SynthPreset } from '../types/app';
 import type { DrumHit } from './drums';
 import { getDrumHitsForBar } from './drums';
 
@@ -11,7 +11,7 @@ export interface EngineSettings {
   chordVolume: number;
   drumVolume: number;
   playbackMode: PlaybackMode;
-  instrument: InstrumentId;
+  synthPreset: SynthPreset;
   bassRegister: RegisterName;
   chordRegister: RegisterName;
   drumPattern: DrumPattern;
@@ -73,7 +73,7 @@ export class AudioEngine {
         const startTime = timeAtBeatStart + ((event.startBeat - beatStart) * 60) / settings.bpm;
         const durationSeconds = (event.durationBeats * 60) / settings.bpm;
         event.midi.forEach((midi, index) => {
-          this.playSynthNote(midiToFrequency(midi), startTime, durationSeconds, settings.instrument, index === 0);
+          this.playSynthNote(midiToFrequency(midi), startTime, durationSeconds, settings.synthPreset, index === 0);
         });
       });
 
@@ -99,11 +99,31 @@ export class AudioEngine {
     this.masterGain?.gain.setValueAtTime(this.masterGain.gain.value, silenceTime);
   }
 
+  previewSynthNotes(midiNotes: number[], synthPreset: SynthPreset, durationSeconds = 1.2): void {
+    if (!this.context) {
+      return;
+    }
+
+    const startTime = this.context.currentTime + 0.01;
+    midiNotes.forEach((midi, index) => {
+      this.playSynthNote(midiToFrequency(midi), startTime, durationSeconds, synthPreset, index === 0);
+    });
+  }
+
+  previewSingleNote(midi: number, synthPreset: SynthPreset, durationSeconds = 1.2): void {
+    if (!this.context) {
+      return;
+    }
+
+    const startTime = this.context.currentTime + 0.01;
+    this.playSynthNote(midiToFrequency(midi), startTime, durationSeconds, synthPreset, false);
+  }
+
   private playSynthNote(
     frequency: number,
     startTime: number,
     durationSeconds: number,
-    instrument: InstrumentId,
+    synthPreset: SynthPreset,
     isBass: boolean,
   ): void {
     if (!this.context || !this.chordGain) {
@@ -113,22 +133,29 @@ export class AudioEngine {
     const oscillator = this.context.createOscillator();
     const gainNode = this.context.createGain();
     const filter = this.context.createBiquadFilter();
+    const peakGain = isBass ? 0.18 : 0.12;
+    const noteEndTime = startTime + Math.max(durationSeconds, 0.01);
+    const safeAttack = Math.min(Math.max(synthPreset.attack, 0.001), Math.max(noteEndTime - startTime - 0.002, 0.001));
+    const safeRelease = Math.min(Math.max(synthPreset.release, 0.001), Math.max(noteEndTime - startTime - 0.001, 0.001));
+    const attackEnd = startTime + safeAttack;
+    const releaseStartTime = Math.max(attackEnd, noteEndTime - safeRelease);
 
-    oscillator.type = instrument === 'sine-pad' ? 'sine' : instrument === 'square-organ' ? 'square' : 'triangle';
+    oscillator.type = synthPreset.waveform;
     oscillator.frequency.setValueAtTime(frequency, startTime);
 
     filter.type = 'lowpass';
-    filter.frequency.setValueAtTime(isBass ? 800 : 1800, startTime);
+    filter.frequency.setValueAtTime(synthPreset.filterCutoff, startTime);
 
     gainNode.gain.setValueAtTime(0.0001, startTime);
-    gainNode.gain.exponentialRampToValueAtTime(isBass ? 0.18 : 0.12, startTime + 0.01);
-    gainNode.gain.exponentialRampToValueAtTime(0.0001, startTime + Math.max(durationSeconds, 0.08));
+    gainNode.gain.exponentialRampToValueAtTime(peakGain, attackEnd);
+    gainNode.gain.setValueAtTime(peakGain, releaseStartTime);
+    gainNode.gain.exponentialRampToValueAtTime(0.0001, noteEndTime);
 
     oscillator.connect(filter);
     filter.connect(gainNode);
     gainNode.connect(this.chordGain);
     oscillator.start(startTime);
-    oscillator.stop(startTime + Math.max(durationSeconds + 0.05, 0.1));
+    oscillator.stop(noteEndTime + 0.02);
   }
 
   private playDrumHit(hit: DrumHit, startTime: number): void {
