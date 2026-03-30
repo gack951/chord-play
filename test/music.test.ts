@@ -9,9 +9,11 @@ describe('music voicing', () => {
     expect(midi[1]).toBe(60);
   });
 
-  it('chooses an inversion close to the previous chord height', () => {
-    const cMajor = buildChordMidiNotes('C', [0, 4, 7], null, 'C3', 'C4');
-    const gMajor = buildChordMidiNotes('G', [0, 4, 7], null, 'C3', 'C4', cMajor);
+  it('keeps nearby inversions within the same bar', () => {
+    const events = barsToChordEvents(parseProgression('C G').validBars, 'block', 'C3', 'C4');
+    const chordEvents = events.filter((event) => event.midi.length > 1);
+    const cMajor = chordEvents[0]!.midi;
+    const gMajor = chordEvents[1]!.midi;
     const rootPositionG = buildChordMidiNotes('G', [0, 4, 7], null, 'C3', 'C4');
 
     const movementWithVoiceLeading = gMajor
@@ -22,6 +24,14 @@ describe('music voicing', () => {
       .reduce((sum, note, index) => sum + Math.abs(note - cMajor[index + 1]!), 0);
 
     expect(movementWithVoiceLeading).toBeLessThan(movementWithoutVoiceLeading);
+  });
+
+  it('resets inversion choice at each bar boundary', () => {
+    const events = barsToChordEvents(parseProgression('C G | C').validBars, 'block', 'C3', 'C4');
+    const chordEvents = events.filter((event) => event.midi.length > 1);
+    const standaloneC = buildChordMidiNotes('C', [0, 4, 7], null, 'C3', 'C4');
+
+    expect(chordEvents[2]?.midi).toEqual(standaloneC);
   });
 
   it('creates arpeggio events', () => {
