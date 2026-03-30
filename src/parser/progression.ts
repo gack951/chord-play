@@ -84,6 +84,7 @@ export function parseProgression(text: string): ProgressionParseResult {
           chord: previousChord,
           sourceTokenIndex: tokenIndex,
           anticipationBeats,
+          isRepeat: true,
         });
         return;
       }
@@ -95,6 +96,7 @@ export function parseProgression(text: string): ProgressionParseResult {
           chord: null,
           sourceTokenIndex: tokenIndex,
           anticipationBeats,
+          isRepeat: false,
         });
         return;
       }
@@ -108,6 +110,7 @@ export function parseProgression(text: string): ProgressionParseResult {
           chord,
           sourceTokenIndex: tokenIndex,
           anticipationBeats,
+          isRepeat: false,
         });
       } catch (error) {
         issues.push({

@@ -17,6 +17,7 @@ interface TimedSlot {
   chord: ParsedBar['slots'][number]['chord'];
   actualStartBeat: number;
   actualEndBeat: number;
+  isRepeat: boolean;
 }
 
 export function buildChordMidiNotes(
@@ -50,7 +51,7 @@ export function barsToChordEvents(
   chordRegister: RegisterName,
 ): ChordEvent[] {
   const events: ChordEvent[] = [];
-  const timedSlots: TimedSlot[] = [];
+  const rawTimedSlots: TimedSlot[] = [];
 
   bars.forEach((bar, barIndex) => {
     const slotBeats = 4 / bar.slotCount;
@@ -58,23 +59,36 @@ export function barsToChordEvents(
     bar.slots.forEach((slot, slotIndex) => {
       const nominalStartBeat = barIndex * 4 + slotIndex * slotBeats;
       const actualStartBeat = Math.max(0, nominalStartBeat - slot.anticipationBeats);
-      timedSlots.push({
+      rawTimedSlots.push({
         token: slot.token,
         chord: slot.chord,
         actualStartBeat,
         actualEndBeat: nominalStartBeat + slotBeats,
+        isRepeat: slot.isRepeat,
       });
     });
   });
 
   const totalBeats = bars.length * 4;
-  timedSlots.forEach((slot, index) => {
-    const nextStartBeat = timedSlots[index + 1]?.actualStartBeat ?? totalBeats;
-    const releaseBeat = nextStartBeat - RELEASE_GAP_BEATS;
-    slot.actualEndBeat = Math.max(slot.actualStartBeat, releaseBeat);
+  const mergedSlots: TimedSlot[] = [];
+
+  rawTimedSlots.forEach((slot) => {
+    const previousSlot = mergedSlots[mergedSlots.length - 1];
+    if (slot.isRepeat && previousSlot && previousSlot.chord) {
+      previousSlot.actualEndBeat = Math.max(previousSlot.actualEndBeat, slot.actualEndBeat);
+      return;
+    }
+
+    mergedSlots.push({ ...slot });
   });
 
-  timedSlots.forEach((slot) => {
+  mergedSlots.forEach((slot, index) => {
+    const nextStartBeat = mergedSlots[index + 1]?.actualStartBeat ?? totalBeats;
+    const releaseBeat = nextStartBeat - RELEASE_GAP_BEATS;
+    slot.actualEndBeat = Math.max(slot.actualStartBeat, Math.min(slot.actualEndBeat, releaseBeat));
+  });
+
+  mergedSlots.forEach((slot) => {
     if (!slot.chord) {
       return;
     }

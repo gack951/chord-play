@@ -13,6 +13,7 @@ export interface Slot {
   chord: ParsedChord | null;
   sourceTokenIndex: number;
   anticipationBeats: number;
+  isRepeat: boolean;
 }
 
 export interface ParsedBar {

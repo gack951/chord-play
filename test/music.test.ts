@@ -41,4 +41,31 @@ describe('music voicing', () => {
     expect(chordEvent?.startBeat).toBe(0);
     expect(chordEvent?.durationBeats).toBe(1.875);
   });
+
+  it('merges trailing repeats into a longer sustain but keeps explicit duplicate chords separated', () => {
+    const repeated = barsToChordEvents(parseProgression('A B C %').validBars, 'block', 'C3', 'C4');
+    const explicit = barsToChordEvents(parseProgression('A B C C').validBars, 'block', 'C3', 'C4');
+
+    const repeatedChordEvents = repeated.filter((event) => event.midi.length > 1);
+    const explicitChordEvents = explicit.filter((event) => event.midi.length > 1);
+
+    expect(repeatedChordEvents).toHaveLength(3);
+    expect(repeatedChordEvents[2]?.chordLabel).toBe('C');
+    expect(repeatedChordEvents[2]?.durationBeats).toBe(1.875);
+
+    expect(explicitChordEvents).toHaveLength(4);
+    expect(explicitChordEvents[2]?.durationBeats).toBe(0.875);
+    expect(explicitChordEvents[3]?.durationBeats).toBe(0.875);
+  });
+
+  it('extends anticipated chords across following repeat slots', () => {
+    const parsed = parseProgression("C 'F % %");
+    const events = barsToChordEvents(parsed.validBars, 'block', 'C3', 'C4');
+    const chordEvents = events.filter((event) => event.midi.length > 1);
+
+    expect(chordEvents).toHaveLength(2);
+    expect(chordEvents[1]?.chordLabel).toBe('F');
+    expect(chordEvents[1]?.startBeat).toBe(0.5);
+    expect(chordEvents[1]?.durationBeats).toBe(3.375);
+  });
 });

@@ -19,6 +19,7 @@ describe('parseProgression', () => {
     const result = parseProgression('Cm % | F %');
     expect(result.issues).toHaveLength(0);
     expect(result.validBars[0]?.slots[1]?.chord?.label).toBe('Cm');
+    expect(result.validBars[0]?.slots[1]?.isRepeat).toBe(true);
     expect(result.validBars[1]?.slots[1]?.chord?.label).toBe('F');
   });
 
