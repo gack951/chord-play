@@ -3,8 +3,8 @@ import { createD1UserStateStore } from '../../src/server/stateStore';
 
 interface Env {
   DB?: {
-    exec(query: string): Promise<unknown>;
     prepare(query: string): {
+      run(): Promise<unknown>;
       bind(...values: unknown[]): {
         first<T>(): Promise<T | null>;
         run(): Promise<unknown>;

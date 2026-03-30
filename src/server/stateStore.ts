@@ -12,6 +12,7 @@ CREATE TABLE IF NOT EXISTS user_states (
 `;
 
 interface D1PreparedStatementLike {
+  run(): Promise<unknown>;
   bind(...values: unknown[]): {
     first<T>(): Promise<T | null>;
     run(): Promise<unknown>;
@@ -19,7 +20,6 @@ interface D1PreparedStatementLike {
 }
 
 interface D1DatabaseLike {
-  exec(query: string): Promise<unknown>;
   prepare(query: string): D1PreparedStatementLike;
 }
 
@@ -34,6 +34,10 @@ interface StoredRow {
 export interface UserStateStore {
   load(session: SessionUser): Promise<AppState>;
   save(session: SessionUser, incomingState: AppState): Promise<{ state: AppState; applied: 'saved' | 'ignored' }>;
+}
+
+async function ensureSchema(db: D1DatabaseLike): Promise<void> {
+  await db.prepare(D1_SCHEMA_SQL).run();
 }
 
 function cloneState(state: AppState): AppState {
@@ -94,7 +98,7 @@ class D1UserStateStore implements UserStateStore {
   constructor(private readonly db: D1DatabaseLike) {}
 
   async load(session: SessionUser): Promise<AppState> {
-    await this.db.exec(D1_SCHEMA_SQL);
+    await ensureSchema(this.db);
     const key = normalizeUserId(session.id);
     const row = await this.db
       .prepare('SELECT user_key, email, state_json, updated_at, created_at FROM user_states WHERE user_key = ?')
@@ -111,7 +115,7 @@ class D1UserStateStore implements UserStateStore {
   }
 
   async save(session: SessionUser, incomingState: AppState): Promise<{ state: AppState; applied: 'saved' | 'ignored' }> {
-    await this.db.exec(D1_SCHEMA_SQL);
+    await ensureSchema(this.db);
     const key = normalizeUserId(session.id);
     const normalizedIncoming = normalizeUpdatedAt(normalizeAppState(incomingState));
     const row = await this.db
