@@ -17,10 +17,15 @@ export const onRequest = async (context: Context): Promise<Response> => {
     return new Response('Cloudflare Access environment variables are missing.', { status: 500 });
   }
 
-  const middleware = cloudflareAccessPlugin({
-    domain: context.env.CLOUDFLARE_ACCESS_DOMAIN as `https://${string}.cloudflareaccess.com`,
-    aud: context.env.CLOUDFLARE_ACCESS_AUD,
-  }) as (input: Context) => Promise<Response>;
+  try {
+    const middleware = cloudflareAccessPlugin({
+      domain: context.env.CLOUDFLARE_ACCESS_DOMAIN as `https://${string}.cloudflareaccess.com`,
+      aud: context.env.CLOUDFLARE_ACCESS_AUD,
+    }) as (input: Context) => Promise<Response>;
 
-  return middleware(context);
+    return await middleware(context);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown middleware error';
+    return new Response(`Cloudflare Access middleware failed: ${message}`, { status: 500 });
+  }
 };

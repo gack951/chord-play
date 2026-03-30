@@ -2,7 +2,7 @@ import { handleSaveStateRequest } from '../../src/server/api';
 import { createD1UserStateStore } from '../../src/server/stateStore';
 
 interface Env {
-  DB: {
+  DB?: {
     exec(query: string): Promise<unknown>;
     prepare(query: string): {
       bind(...values: unknown[]): {
@@ -35,9 +35,18 @@ export const onRequestPut = async (context: Context): Promise<Response> => {
     return new Response('Authenticated Cloudflare Access identity is missing.', { status: 401 });
   }
 
-  const store = createD1UserStateStore(context.env.DB);
-  return handleSaveStateRequest(context.request, store, {
-    id,
-    email: payload?.email ?? null,
-  });
+  if (!context.env.DB) {
+    return new Response('D1 binding "DB" is missing.', { status: 500 });
+  }
+
+  try {
+    const store = createD1UserStateStore(context.env.DB);
+    return await handleSaveStateRequest(context.request, store, {
+      id,
+      email: payload?.email ?? null,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown state save error';
+    return new Response(`State save failed: ${message}`, { status: 500 });
+  }
 };
