@@ -643,6 +643,7 @@ When asked to perform non-trivial work:
 - make or recommend a git checkpoint before major changes
 - keep commits logically scoped
 - avoid mixing refactors with feature work unless necessary
+- if only post-deploy manual verification remains at the end of the task, commit and push the completed work unless the user says not to
 
 ## Continuity across repeated Codex runs
 

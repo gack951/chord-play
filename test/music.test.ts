@@ -9,6 +9,21 @@ describe('music voicing', () => {
     expect(midi[1]).toBe(60);
   });
 
+  it('chooses an inversion close to the previous chord height', () => {
+    const cMajor = buildChordMidiNotes('C', [0, 4, 7], null, 'C3', 'C4');
+    const gMajor = buildChordMidiNotes('G', [0, 4, 7], null, 'C3', 'C4', cMajor);
+    const rootPositionG = buildChordMidiNotes('G', [0, 4, 7], null, 'C3', 'C4');
+
+    const movementWithVoiceLeading = gMajor
+      .slice(1)
+      .reduce((sum, note, index) => sum + Math.abs(note - cMajor[index + 1]!), 0);
+    const movementWithoutVoiceLeading = rootPositionG
+      .slice(1)
+      .reduce((sum, note, index) => sum + Math.abs(note - cMajor[index + 1]!), 0);
+
+    expect(movementWithVoiceLeading).toBeLessThan(movementWithoutVoiceLeading);
+  });
+
   it('creates arpeggio events', () => {
     const parsed = parseProgression('C | G');
     const events = barsToChordEvents(parsed.validBars, 'arp-up-8', 'C3', 'C4');
